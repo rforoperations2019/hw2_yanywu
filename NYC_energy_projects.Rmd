@@ -1,0 +1,83 @@
+---
+title: "NYC_energy_project"
+runtime: shiny
+output: html_document
+---
+
+```{r setup, include=FALSE}
+require(rgdal)
+require(leaflet)
+require(leaflet.extras)
+require(dplyr)
+require(stringr)
+```
+
+```{r, controls}
+leaflet() %>%
+  # Basemaps
+  addTiles(group = "OSM (default)") %>%
+  addProviderTiles("Esri.WorldStreetMap", group = "Esri World") %>%
+  addProviderTiles("Stamen.TonerLite", group = "Toner Lite") %>%
+  # Layers control
+  addLayersControl(
+    baseGroups = c("OSM (default)", "Esri World", "Toner Lite"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+```
+
+```{r, polygon}
+eep_data <- read.csv("Energy_Efficiency_Projects.csv", stringsAsFactors = FALSE, colClasses = c("Postcode" = "character"))[,1:13]
+eep_data <- na.omit(eep_data)
+
+nyc.load <- readOGR("./ZIP_CODE_040114/ZIP_CODE_040114.shp", layer = "ZIP_CODE_040114", stringsAsFactors = FALSE, GDAL1_integer64_policy = TRUE)
+
+nyc <- nyc.load[nyc.load$ZIPCODE %in% eep_data$Postcode,]
+nyc@data <- merge(nyc@data, eep_data, sort = FALSE, by.x = "ZIPCODE", by.y = "ProjectStatus")
+
+bin_polygon <- c(0, 50, 100, 500, 1000, Inf)
+pal_polygon <- colorBin("PuRd", domain = nyc$CO2e..MT..Calculated, bins = bin_polygon)
+  
+leaflet(data = nyc) %>%
+  addProviderTiles("Esri.WorldStreetMap") %>%
+  addPolygons(    
+    fillColor = ~pal_polygon(nyc$CO2e..MT..Calcualted),  
+    # Error in pal_polygon(CO2e..MT..Calcualted) : object 'CO2e..MT..Calcualted' not found
+    popup = ~paste0("<b>", nyc$ProjectSiteName, ":</b> ", nyc$CO2e..MT..Calculated, "Metric Tons"),
+    weight = 2,
+    opacity = 1,
+    color = "#696969",
+    dashArray = "3",
+    fillOpacity = 0.8,
+    highlight = highlightOptions(
+      weight = 5,
+      color = "#FFFFFF",
+      dashArray = "",
+      fillOpacity = 0.7,
+      bringToFront = TRUE)) %>%
+  addLegend(
+    position = "bottomright", 
+    pal = pal_polygon, 
+    values = ~CO2e..MT..Calculated, 
+    title = "GHG(CO2) Emissions (Unit: MT)")
+
+# no polygon appeared
+```
+
+```{r, marker}
+
+type <- unique(eep_data$PrimaryProjectType)
+pal_point <- colorFactor(c("Paired"), c(type))
+
+leaflet(data = nyc) %>% 
+  addProviderTiles("Esri.WorldStreetMap") %>%
+  addCircleMarkers(
+    lng = ~Longitude, lat = ~Latitude, 
+    radius = 3, 
+    color = ~pal_point(PrimaryProjectType),
+    fillOpacity = 0.5) %>%
+  addLegend(
+    position = "topleft", 
+    pal = pal_point, 
+    values = ~PrimaryProjectType, 
+    title = "Project Type")
+```
