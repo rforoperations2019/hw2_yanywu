@@ -12,72 +12,109 @@ require(dplyr)
 require(stringr)
 ```
 
-```{r, controls}
+```{r, polygon}
+eep_data <- read.csv("Energy_Efficiency_Projects.csv", stringsAsFactors = FALSE, colClasses = c("Postcode" = "character"))[,1:13]
+eep_data <- na.omit(eep_data)
+type <- unique(eep_data$PrimaryProjectType)
+eep_co2 <- group_by(eep_data, Postcode)
+summary <- summarise(eep_co2, mean=mean(CO2e..MT..Calculated))
+
+nyc.load <- readOGR("https://raw.githubusercontent.com/fedhere/PUI2015_EC/master/mam1612_EC/nyc-zip-code-tabulation-areas-polygons.geojson")
+
+nyc <- nyc.load[nyc.load$postalCode %in% summary$Postcode,]
+nyc@data <- merge(nyc@data, summary, sort = FALSE, by.x = "postalCode", by.y = "Postcode")
+
+
+
+bin_polygon <- c(0, 50, 100, 200, 500, Inf)
+pal_polygon <- colorBin("PuRd", domain = nyc$mean, bins = bin_polygon)
+pal_point <- colorFactor(c("Paired"), c(type))  
+
 leaflet() %>%
   # Basemaps
   addTiles(group = "OSM (default)") %>%
   addProviderTiles("Esri.WorldStreetMap", group = "Esri World") %>%
   addProviderTiles("Stamen.TonerLite", group = "Toner Lite") %>%
-  # Layers control
-  addLayersControl(
-    baseGroups = c("OSM (default)", "Esri World", "Toner Lite"),
-    options = layersControlOptions(collapsed = FALSE)
-  )
-```
-
-```{r, polygon}
-eep_data <- read.csv("Energy_Efficiency_Projects.csv", stringsAsFactors = FALSE, colClasses = c("Postcode" = "character"))[,1:13]
-eep_data <- na.omit(eep_data)
-
-nyc.load <- readOGR("./ZIP_CODE_040114/ZIP_CODE_040114.shp", layer = "ZIP_CODE_040114", stringsAsFactors = FALSE, GDAL1_integer64_policy = TRUE)
-
-nyc <- nyc.load[nyc.load$ZIPCODE %in% eep_data$Postcode,]
-nyc@data <- merge(nyc@data, eep_data, sort = FALSE, by.x = "ZIPCODE", by.y = "ProjectStatus")
-
-bin_polygon <- c(0, 50, 100, 500, 1000, Inf)
-pal_polygon <- colorBin("PuRd", domain = nyc$CO2e..MT..Calculated, bins = bin_polygon)
-  
-leaflet(data = nyc) %>%
-  addProviderTiles("Esri.WorldStreetMap") %>%
-  addPolygons(    
-    fillColor = ~pal_polygon(nyc$CO2e..MT..Calcualted),  
+  # Overlay groups
+  addPolygons(  
+    data = nyc,
+    fillColor = ~pal_polygon(mean),
     # Error in pal_polygon(CO2e..MT..Calcualted) : object 'CO2e..MT..Calcualted' not found
-    popup = ~paste0("<b>", nyc$ProjectSiteName, ":</b> ", nyc$CO2e..MT..Calculated, "Metric Tons"),
+    popup = ~paste0("<b>", nyc$Postcode, ":</b> ", nyc$mean, "Metric Tons"),
     weight = 2,
     opacity = 1,
-    color = "#696969",
+    color = "blue",
     dashArray = "3",
     fillOpacity = 0.8,
     highlight = highlightOptions(
       weight = 5,
       color = "#FFFFFF",
       dashArray = "",
-      fillOpacity = 0.7,
-      bringToFront = TRUE)) %>%
+      fillOpacity = 1,
+      bringToFront = TRUE),
+    group = "CO2 Emission") %>%
   addLegend(
-    position = "bottomright", 
+    position = "bottomright",
+    opacity = 0.8,
     pal = pal_polygon, 
-    values = ~CO2e..MT..Calculated, 
-    title = "GHG(CO2) Emissions (Unit: MT)")
-
-# no polygon appeared
-```
-
-```{r, marker}
-
-type <- unique(eep_data$PrimaryProjectType)
-pal_point <- colorFactor(c("Paired"), c(type))
-
-leaflet(data = nyc) %>% 
-  addProviderTiles("Esri.WorldStreetMap") %>%
+    values = nyc$mean, 
+    title = "Average GHG(CO2) Emissions (Unit: MT)",
+    group = "CO2 Emission") %>%
   addCircleMarkers(
+    data = eep_data,
     lng = ~Longitude, lat = ~Latitude, 
     radius = 3, 
     color = ~pal_point(PrimaryProjectType),
-    fillOpacity = 0.5) %>%
+    fillOpacity = 1,
+    clusterOptions = markerClusterOptions(removeOutsideVisibleBounds = FALSE),
+    group = "Project Type"
+    ) %>%
   addLegend(
     position = "topleft", 
     pal = pal_point, 
-    values = ~PrimaryProjectType, 
-    title = "Project Type")
+    values = eep_data$PrimaryProjectType, 
+    title = "Project Type",
+    group = "Project Type") %>%
+  # Layers control
+  addLayersControl(
+    baseGroups = c("OSM (default)", "Esri World", "Toner Lite"),
+    overlayGroups = c("CO2 Emission", "Project Type"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+
+
+```
+
+
+```{r, marker}
+eep_data <- read.csv("Energy_Efficiency_Projects.csv", stringsAsFactors = FALSE, colClasses = c("Postcode" = "character"))[,1:13]
+eep_data <- na.omit(eep_data)
+borough <- unique(eep_data$Borough)
+pal_line <- colorFactor(c("Dark2"), c(borough))
+
+m <- leaflet() %>% 
+  addProviderTiles("Esri.WorldStreetMap") %>%
+  addCircleMarkers(
+    data = eep_data,
+    lng = ~Longitude, lat = ~Latitude, 
+    radius = 3, 
+    color = ~pal_line(Borough),
+    fillOpacity = 0.8
+    ) %>%
+  addLegend(
+  position = "topleft", 
+  pal = pal_line, 
+  values = eep_data$Borough, 
+  title = "Borough")
+
+for(area in borough){
+  borough_data <- eep_data[eep_data$Borough==area,]
+  m = addPolylines(m,
+                 data = borough_data,
+                 lng= ~ Longitude,
+                 lat= ~ Latitude,
+                 color= ~pal_line(Borough),
+                         weight = 1)
+}
+m
 ```
